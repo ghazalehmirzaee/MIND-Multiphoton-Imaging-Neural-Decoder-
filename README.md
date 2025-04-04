@@ -98,6 +98,26 @@ source myenv/bin/activate  # Linux/Mac
 # or
 myenv\Scripts\activate  # Windows
 
-3. 
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+
+4. Configure Weights & Biases (optional):
+```bash
+wandb login
+
+Usage
+Data Preparation
+Place your calcium imaging data files and behavioral data files in the appropriate directories:
+```bash
+MIND/
+├── data/
+│   ├── raw/
+│   │   ├── your_calcium_data.mat
+│   │   └── your_behavior_data.xlsx
+
+
+
+
 
 
