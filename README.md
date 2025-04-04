@@ -90,4 +90,10 @@ MIND uses a sliding window approach to process temporal calcium imaging data, co
    git clone https://github.com/yourusername/MIND.git
    cd MIND
    Create and activate a virtual environment:
-bash
+  bash```
+2. Create and activate a virtual environment:
+```bash
+
+ bash```
+
+
