@@ -1,4 +1,4 @@
-# MIND: Multi-signal Interpretable Neural Decoding
+# MIND: Multiphoton Imaging Neural Decoder
 
 ## Neural Activity Classification with Classical and Deep Learning Models
 
