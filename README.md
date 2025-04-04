@@ -53,7 +53,7 @@ MIND uses a sliding window approach to process temporal calcium imaging data, co
 1. **Data processing** (`project_setup.py`):
    - Load MATLAB calcium imaging data
    - Load and align behavioral event data
-   - Create sliding windows with configurable size and step
+   - Create sliding windows with a configurable size and step
    - Split data into train/validation/test sets
 
 2. **Classical ML models** (`classical_ml_models.py`):
@@ -90,10 +90,14 @@ MIND uses a sliding window approach to process temporal calcium imaging data, co
    git clone https://github.com/yourusername/MIND.git
    cd MIND
    Create and activate a virtual environment:
-  bash```
+  
 2. Create and activate a virtual environment:
 ```bash
+python -m venv myenv
+source myenv/bin/activate  # Linux/Mac
+# or
+myenv\Scripts\activate  # Windows
 
- bash```
+3. 
 
 
