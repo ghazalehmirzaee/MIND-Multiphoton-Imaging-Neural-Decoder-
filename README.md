@@ -90,22 +90,23 @@ MIND uses a sliding window approach to process temporal calcium imaging data, co
    git clone https://github.com/yourusername/MIND.git
    cd MIND
    Create and activate a virtual environment:
-  
+   ```
 2. Create and activate a virtual environment:
-```bash
-python -m venv myenv
-source myenv/bin/activate  # Linux/Mac
-# or
-myenv\Scripts\activate  # Windows
-
+  ```bash
+  python -m venv myenv
+  source myenv/bin/activate  # Linux/Mac
+  # or
+  myenv\Scripts\activate  # Windows
+ ```
 3. Install dependencies:
-```bash
-pip install -r requirements.txt
+  ```bash
+  pip install -r requirements.txt
+ ```
 
 4. Configure Weights & Biases (optional):
-```bash
-wandb login
-
+  ```bash
+  wandb login
+ ```
 Usage
 Data Preparation
 Place your calcium imaging data files and behavioral data files in the appropriate directories:
@@ -115,9 +116,55 @@ MIND/
 │   ├── raw/
 │   │   ├── your_calcium_data.mat
 │   │   └── your_behavior_data.xlsx
+```
 
+Running the Pipeline
+Execute the main script with appropriate arguments:
+```bash
+python main.py --matlab_file data/raw/your_calcium_data.mat \
+               --behavior_file data/raw/your_behavior_data.xlsx \
+               --window_size 10 \
+               --step_size 2 \
+               --epochs 50 \
+               --batch_size 32 \
+               --project_name "MIND" \
+               --experiment_name "experiment001"
+```
+Command Line Arguments
 
+--matlab_file: Path to MATLAB file containing calcium imaging data
+--behavior_file: Path to behavior data Excel file
+--window_size: Window size for sliding window approach (default: 10)
+--step_size: Step size for sliding window (default: 2)
+--epochs: Number of epochs for deep learning models (default: 50)
+--batch_size: Batch size for deep learning models (default: 32)
+--project_name: W&B project name (default: "MIND")
+--experiment_name: Name for the W&B experiment
+--device: Device to use for PyTorch training (default: auto-detect)
+--num_workers: Number of workers for data loading (default: 4)
 
+Execution Flags
 
+--skip_processing: Skip data processing step
+--skip_classical: Skip classical ML models
+--skip_deep_learning: Skip deep learning models
+--skip_visualization: Skip results visualization
+
+Results and Visualization
+After running the pipeline, results and visualizations are saved to:
+
+```bash
+MIND/
+├── results/
+│   ├── figures/
+│   │   ├── performance_comparison.png
+│   │   ├── signal_type_comparison.png
+│   │   ├── model_comparison.png
+│   │   └── ...
+│   ├── metrics/
+│   │   ├── classical_ml_results.json
+│   │   ├── deep_learning_results.json
+│   │   └── summary_report.json
+```
 
 
