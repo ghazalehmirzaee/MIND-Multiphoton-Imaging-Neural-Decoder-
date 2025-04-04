@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+env/
+build/
+dist/
+*.egg-info/
+
+# Data files
+data/raw/*.mat
+data/raw/*.csv
+
+# Model weights
+models/*.h5
+models/*.pkl
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual environment
+venv/
+env/
+
+# W&B
+wandb/
