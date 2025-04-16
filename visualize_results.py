@@ -20,7 +20,7 @@ class ResultVisualizer:
 
         self.wandb = wandb_run
         self.signal_types = ['calcium', 'deltaf', 'deconv']
-        self.classical_models = ['random_forest', 'svm', 'xgboost', 'mlp']
+        self.classical_models = ['random_forest', 'svm', 'mlp']
         self.dl_models = ['mlp', 'lstm', 'cnn']
 
         # Combine results
@@ -266,18 +266,18 @@ class ResultVisualizer:
                 ax_rf.set_ylabel('Neuron')
                 plt.colorbar(im, ax=ax_rf)
 
-            # XGBoost importance
-            xgb_key = f"{signal_type}_xgb"
-            if xgb_key in feature_importance:
-                ax_xgb = fig.add_subplot(gs[i, 1])
-                xgb_importance = np.array(feature_importance[xgb_key])
+            # MLP importance
+            mlp_key = f"{signal_type}_mlp"
+            if mlp_key in feature_importance:
+                ax_mlp = fig.add_subplot(gs[i, 1])
+                mlp_importance = np.array(feature_importance[mlp_key])
 
                 # Plot importance heatmap
-                im = ax_xgb.imshow(xgb_importance.T, aspect='auto', cmap='viridis')
-                ax_xgb.set_title(f'XGBoost Feature Importance - {signal_type}')
-                ax_xgb.set_xlabel('Time Step')
-                ax_xgb.set_ylabel('Neuron')
-                plt.colorbar(im, ax=ax_xgb)
+                im = ax_mlp.imshow(mlp_importance.T, aspect='auto', cmap='viridis')
+                ax_mlp.set_title(f'MLP Weight Magnitude - {signal_type}')
+                ax_mlp.set_xlabel('Time Step')
+                ax_mlp.set_ylabel('Neuron')
+                plt.colorbar(im, ax=ax_mlp)
 
         plt.tight_layout()
 

@@ -7,7 +7,7 @@ import random
 import torch
 from project_setup import process_main, set_seeds
 from classical_ml_models import ClassicalMLModels
-from deep_learning_models import DeepLearningModels  # Changed import to PyTorch version
+from deep_learning_models import DeepLearningModels
 from visualize_results import ResultVisualizer
 
 
@@ -39,13 +39,13 @@ def parse_args():
                         help='Path to behavior data Excel file (optional)')
 
     # Processing parameters
-    parser.add_argument('--window_size', type=int, default=10,
+    parser.add_argument('--window_size', type=int, default=15,
                         help='Window size for sliding window')
-    parser.add_argument('--step_size', type=int, default=5,
+    parser.add_argument('--step_size', type=int, default=1,
                         help='Step size for sliding window')
 
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=50,
+    parser.add_argument('--epochs', type=int, default=100,
                         help='Number of epochs for deep learning models')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for deep learning models')
@@ -138,6 +138,7 @@ def main():
         dl_models.train_and_evaluate_all(args.epochs, args.batch_size)
         dl_models.test_best_models()
         dl_models.visualize_activations()
+        dl_models.visualize_neuron_signals()  # Add the new visualization
         dl_models.save_results()
         dl_models.save_models()
         wandb_run.finish()

@@ -38,51 +38,87 @@ set_seeds()
 class MLPModel(nn.Module):
     def __init__(self, input_dim, n_classes):
         super(MLPModel, self).__init__()
+        # Deeper network with batch normalization
         self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(input_dim, 128)
-        self.dropout1 = nn.Dropout(0.3)
-        self.fc2 = nn.Linear(128, 64)
-        self.dropout2 = nn.Dropout(0.3)
-        self.fc3 = nn.Linear(64, n_classes)
+        self.fc1 = nn.Linear(input_dim, 256)
+        self.bn1 = nn.BatchNorm1d(256)
+        self.dropout1 = nn.Dropout(0.4)
+
+        self.fc2 = nn.Linear(256, 128)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.dropout2 = nn.Dropout(0.4)
+
+        self.fc3 = nn.Linear(128, 64)
+        self.bn3 = nn.BatchNorm1d(64)
+        self.dropout3 = nn.Dropout(0.3)
+
+        self.fc4 = nn.Linear(64, n_classes)
 
     def forward(self, x):
         x = self.flatten(x)
-        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.bn1(self.fc1(x)))
         x = self.dropout1(x)
-        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.bn2(self.fc2(x)))
         x = self.dropout2(x)
-        x = self.fc3(x)
+        x = torch.relu(self.bn3(self.fc3(x)))
+        x = self.dropout3(x)
+        x = self.fc4(x)
         return x
+
+
+class AttentionLayer(nn.Module):
+    def __init__(self, hidden_size):
+        super(AttentionLayer, self).__init__()
+        self.attention = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, 1)
+        )
+
+    def forward(self, hidden_states):
+        # hidden_states: [batch_size, seq_len, hidden_size]
+        attn_weights = self.attention(hidden_states)  # [batch_size, seq_len, 1]
+        attn_weights = torch.softmax(attn_weights, dim=1)  # [batch_size, seq_len, 1]
+
+        # Apply attention weights to hidden states
+        context = torch.sum(hidden_states * attn_weights, dim=1)  # [batch_size, hidden_size]
+        return context, attn_weights
 
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_size1=64, hidden_size2=128, n_classes=3):
+    def __init__(self, input_size, hidden_size1=128, hidden_size2=256, n_classes=3):
         super(LSTMModel, self).__init__()
-        # Remove return_sequences parameter - PyTorch LSTM returns all sequences by default
-        self.lstm1 = nn.LSTM(input_size, hidden_size1, batch_first=True)
-        self.dropout1 = nn.Dropout(0.3)
-        self.lstm2 = nn.LSTM(hidden_size1, hidden_size2, batch_first=True)
-        self.dropout2 = nn.Dropout(0.3)
-        self.fc1 = nn.Linear(hidden_size2, 64)
+        self.lstm1 = nn.LSTM(input_size, hidden_size1, batch_first=True, bidirectional=True)
+        self.dropout1 = nn.Dropout(0.4)
+        self.lstm2 = nn.LSTM(hidden_size1 * 2, hidden_size2, batch_first=True, bidirectional=True)
+        self.dropout2 = nn.Dropout(0.4)
+
+        # Add attention layer
+        self.attention = AttentionLayer(hidden_size2 * 2)
+
+        self.fc1 = nn.Linear(hidden_size2 * 2, 128)
+        self.bn1 = nn.BatchNorm1d(128)
         self.dropout3 = nn.Dropout(0.3)
-        self.fc2 = nn.Linear(64, n_classes)
+        self.fc2 = nn.Linear(128, n_classes)
 
     def forward(self, x):
-        # First LSTM layer - outputs all sequences by default in PyTorch
+        # First BiLSTM layer
         lstm1_out, _ = self.lstm1(x)
         lstm1_out = self.dropout1(lstm1_out)
 
-        # Second LSTM layer
-        _, (h_n, c_n) = self.lstm2(lstm1_out)
-        # Take the last hidden state
-        last_hidden = h_n[-1]  # Shape: [batch_size, hidden_size2]
-        last_hidden = self.dropout2(last_hidden)
+        # Second BiLSTM layer
+        lstm2_out, _ = self.lstm2(lstm1_out)
+        lstm2_out = self.dropout2(lstm2_out)
 
-        # Dense layers
-        x = torch.relu(self.fc1(last_hidden))
+        # Apply attention
+        context, _ = self.attention(lstm2_out)
+
+        # Dense layers with batch normalization
+        x = torch.relu(self.bn1(self.fc1(context)))
         x = self.dropout3(x)
         x = self.fc2(x)
         return x
+
 
 class CNNModel(nn.Module):
     def __init__(self, input_size, window_size, n_classes):
@@ -90,11 +126,21 @@ class CNNModel(nn.Module):
         # In PyTorch Conv1d: input shape is (batch_size, channels, seq_length)
         # So neurons are channels and window_size is sequence length
 
+        # Deeper CNN with residual connections and batch normalization
         self.conv1 = nn.Conv1d(input_size, 64, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm1d(64)
         self.pool1 = nn.MaxPool1d(kernel_size=2)
+
         self.conv2 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm1d(128)
         self.pool2 = nn.MaxPool1d(kernel_size=2)
+
         self.conv3 = nn.Conv1d(128, 256, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm1d(256)
+
+        # Residual connection (1x1 conv to match dimensions)
+        self.residual = nn.Conv1d(input_size, 256, kernel_size=1)
+        self.bn_res = nn.BatchNorm1d(256)
 
         # Calculate output size after pooling layers
         conv_output_size = window_size
@@ -103,21 +149,36 @@ class CNNModel(nn.Module):
 
         self.flatten = nn.Flatten()
         self.fc1 = nn.Linear(256 * conv_output_size, 128)
+        self.bn_fc = nn.BatchNorm1d(128)
         self.dropout = nn.Dropout(0.5)
         self.fc2 = nn.Linear(128, n_classes)
 
     def forward(self, x):
+        # Save input for residual connection
+        residual_in = x
+
         # Transform from [batch, time_steps, features] to [batch, features, time_steps]
         x = x.permute(0, 2, 1)
+        residual_in = residual_in.permute(0, 2, 1)
 
-        x = torch.relu(self.conv1(x))
+        # Main path
+        x = torch.relu(self.bn1(self.conv1(x)))
         x = self.pool1(x)
-        x = torch.relu(self.conv2(x))
+        x = torch.relu(self.bn2(self.conv2(x)))
         x = self.pool2(x)
-        x = torch.relu(self.conv3(x))
+        x = torch.relu(self.bn3(self.conv3(x)))
+
+        # Residual connection (with downsampling to match dimensions)
+        res = self.residual(residual_in)
+        res = self.bn_res(res)
+        res = nn.functional.adaptive_avg_pool1d(res, x.size(2))
+
+        # Add residual connection (if shapes match)
+        if x.size() == res.size():
+            x = x + res
 
         x = self.flatten(x)
-        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.bn_fc(self.fc1(x)))
         x = self.dropout(x)
         x = self.fc2(x)
         return x
@@ -125,10 +186,10 @@ class CNNModel(nn.Module):
 
 # Custom learning rate scheduler for one-cycle policy
 def one_cycle_scheduler(optimizer, max_lr, total_epochs):
-    """Create a OneCycleLR scheduler."""
+    """Create a OneCycleLR scheduler with warmup and cosine annealing."""
     warmup_epochs = int(0.3 * total_epochs)
 
-    # Use lambda function without referring to epoch directly in step()
+    # Create lambda function for learning rate changes
     def lambda_func(current_epoch):
         if current_epoch < warmup_epochs:
             # Warmup phase: linearly increase learning rate
@@ -139,6 +200,29 @@ def one_cycle_scheduler(optimizer, max_lr, total_epochs):
             return (1 + math.cos(math.pi * progress)) / 2
 
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_func)
+
+
+# Focal loss implementation for handling class imbalance
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+        self.ce_loss = nn.CrossEntropyLoss(reduction='none')
+
+    def forward(self, inputs, targets):
+        ce_loss = self.ce_loss(inputs, targets)
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
 
 class DeepLearningModels:
     def __init__(self, data_dict, wandb_run=None):
@@ -252,7 +336,7 @@ class DeepLearningModels:
         model = CNNModel(input_size, self.window_size, self.n_classes)
         return model
 
-    def train_model(self, model_type, signal_type, epochs=50, batch_size=32):
+    def train_model(self, model_type, signal_type, epochs=100, batch_size=32):
         """Train a specific model on a specific signal type."""
         print(f"Training {model_type} on {signal_type} signal...")
 
@@ -274,10 +358,9 @@ class DeepLearningModels:
         model = model.to(self.device)
 
         # Define optimizer and loss function
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
-        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-5)
 
-        # Set up class weights if available
+        # Get class weights if available
         class_weights = self.data.get('class_weights', {}).get(signal_type, None)
         if class_weights:
             # Convert to PyTorch tensor
@@ -287,18 +370,20 @@ class DeepLearningModels:
                 if cls_idx < self.n_classes:
                     weight_tensor[cls_idx] = weight
 
-            # Create weighted loss function
-            criterion = nn.CrossEntropyLoss(weight=weight_tensor.to(self.device))
+            # Use weighted loss function with focal loss for imbalanced data
+            criterion = FocalLoss(alpha=2.0, gamma=2.0)
+        else:
+            criterion = nn.CrossEntropyLoss()
 
         # Initialize learning rate schedulers
         reduce_lr = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5, min_lr=0.0001
+            optimizer, mode='min', factor=0.5, patience=5, min_lr=0.00001
         )
         one_cycle = one_cycle_scheduler(optimizer, max_lr=0.001, total_epochs=epochs)
 
         # Initialize early stopping parameters
         best_val_loss = float('inf')
-        patience = 7
+        patience = 15  # Increased patience for better convergence
         patience_counter = 0
         best_model_state = None
 
@@ -339,6 +424,7 @@ class DeepLearningModels:
 
                 # Backward pass and optimize
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Gradient clipping
                 optimizer.step()  # Step optimizer BEFORE lr_scheduler
 
                 # Track statistics
@@ -573,7 +659,7 @@ class DeepLearningModels:
 
         return metrics
 
-    def train_and_evaluate_all(self, epochs=50, batch_size=32):
+    def train_and_evaluate_all(self, epochs=100, batch_size=32):
         """Train and evaluate all models on all signal types."""
         for signal_type in self.signal_types:
             # Train and evaluate MLP
@@ -732,6 +818,79 @@ class DeepLearningModels:
 
         return activation_results
 
+    def visualize_neuron_signals(self):
+        """
+        Visualize the raw signals for the 100 most important neurons
+        for each signal type (calcium, deltaf, deconv).
+        """
+        # Check if raw signals are available in the data dictionary
+        required_keys = ['raw_calcium', 'raw_deltaf', 'raw_deconv']
+        for key in required_keys:
+            if key not in self.data:
+                print(f"Missing raw signal: {key}")
+                return None
+
+        # Check if feature importance results are available
+        if 'feature_importance' not in self.results:
+            print("Feature importance not calculated. Run feature_importance() first.")
+            return None
+
+        # Create figure with three subplots (one for each signal type)
+        fig, axes = plt.subplots(3, 1, figsize=(18, 24))
+
+        # Get the top 100 important neurons for each signal type
+        importance_results = self.results['feature_importance']
+
+        for i, signal_type in enumerate(self.signal_types):
+            # Try to get importance rankings from different models
+            if f"{signal_type}_top_neurons_rf" in importance_results:
+                top_neurons = importance_results[f"{signal_type}_top_neurons_rf"]
+            elif f"{signal_type}_top_neurons_mlp" in importance_results:
+                top_neurons = importance_results[f"{signal_type}_top_neurons_mlp"]
+            else:
+                print(f"No neuron importance found for {signal_type}")
+                continue
+
+            # Get raw signal data
+            raw_signal = self.data[f'raw_{signal_type}']
+
+            # Select up to 100 top neurons
+            n_neurons = min(100, len(top_neurons))
+            selected_neurons = top_neurons[:n_neurons]
+
+            # Extract signals for selected neurons
+            neuron_signals = raw_signal[:, selected_neurons].T  # Transpose to get (neurons, timesteps)
+
+            # Plot heatmap of signals
+            im = axes[i].imshow(neuron_signals, aspect='auto', cmap='viridis',
+                                interpolation='nearest', extent=[0, 2999, 0, n_neurons])
+
+
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=axes[i])
+            cbar.set_label(f'{signal_type.capitalize()} Signal Intensity')
+
+            # Add labels and title
+            axes[i].set_title(f'Top 100 Important Neurons - {signal_type.capitalize()} Signal')
+            axes[i].set_xlabel('Time Frames (2999 total)')
+            axes[i].set_ylabel('Neuron ID')
+
+            # Add grid lines
+            axes[i].grid(False)
+
+        plt.tight_layout()
+
+        # Save figure
+        plt.savefig('results/figures/important_neurons_signals.png', dpi=300)
+
+        # Log to W&B
+        if self.wandb:
+            self.wandb.log({"important_neurons_signals": wandb.Image(fig)})
+
+        plt.close(fig)
+
+        return fig
+
     def save_results(self, output_dir='results/metrics'):
         """Save results to JSON file."""
         os.makedirs(output_dir, exist_ok=True)
@@ -764,7 +923,6 @@ class DeepLearningModels:
 
         print(f"Models saved to {output_dir}")
 
-
 # Example usage
 if __name__ == "__main__":
     # Load processed data
@@ -777,9 +935,10 @@ if __name__ == "__main__":
 
     # Train and evaluate models
     dl = DeepLearningModels(data_dict, wandb_run)
-    dl.train_and_evaluate_all(epochs=50, batch_size=32)
+    dl.train_and_evaluate_all(epochs=100, batch_size=32)
     dl.test_best_models()
     dl.visualize_activations()
+    dl.visualize_neuron_signals()  # Add the new visualization
 
     # Save results
     dl.save_results()
@@ -787,4 +946,3 @@ if __name__ == "__main__":
 
     # Finish W&B run
     wandb.finish()
-

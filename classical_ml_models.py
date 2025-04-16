@@ -7,8 +7,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve, auc
-from sklearn.model_selection import GridSearchCV
-import xgboost as xgb
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from sklearn.utils import resample
+from scipy.stats import randint, uniform
 import wandb
 from tqdm import tqdm
 import json
@@ -44,43 +45,76 @@ class ClassicalMLModels:
         self.models = {}
         self.results = {}
         self.signal_types = ['calcium', 'deltaf', 'deconv']
-        self.model_types = ['random_forest', 'svm', 'xgboost', 'mlp']
+        self.model_types = ['random_forest', 'svm', 'mlp']
 
     def train_random_forest(self, X_train, y_train, X_val, y_val, signal_type):
-        """Train Random Forest model."""
+        """Train Random Forest model with optimized parameters."""
         print(f"Training Random Forest on {signal_type} signal...")
 
-        # Define parameter grid for grid search
-        param_grid = {
-            'n_estimators': [100, 200],
-            'max_depth': [None, 10, 20],
-            'min_samples_split': [2, 5],
-            'min_samples_leaf': [1, 2]
+        # Define parameter grid for randomized search (expanded search space)
+        param_dist = {
+            'n_estimators': randint(100, 500),
+            'max_depth': [None, 10, 20, 30, 40, 50],
+            'min_samples_split': randint(2, 10),
+            'min_samples_leaf': randint(1, 5),
+            'max_features': ['sqrt', 'log2', None],
+            'bootstrap': [True, False],
+            'class_weight': ['balanced', 'balanced_subsample', None]
         }
 
         # Initialize Random Forest
-        rf = RandomForestClassifier(random_state=42)
+        rf = RandomForestClassifier(random_state=42, n_jobs=-1)
 
         # Get class weights
         class_weights = self.data.get('class_weights', {}).get(signal_type, None)
         if class_weights:
-            # Convert class weights to format expected by sklearn
-            rf.set_params(class_weight=class_weights)
+            # Include specific class weights in the search
+            param_dist['class_weight'] = ['balanced', 'balanced_subsample', None, class_weights]
 
-        # Grid search with cross-validation
-        grid_search = GridSearchCV(
+        # Randomized search with cross-validation
+        random_search = RandomizedSearchCV(
             estimator=rf,
-            param_grid=param_grid,
+            param_distributions=param_dist,
+            n_iter=30,  # Number of parameter settings sampled
             cv=3,
+            n_jobs=-1,
+            scoring='f1_weighted',
+            random_state=42
+        )
+
+        # Fit model
+        print("Performing randomized search for Random Forest...")
+        random_search.fit(X_train, y_train.astype(int))  # Convert labels to int
+
+        # Get best model
+        best_rf = random_search.best_estimator_
+
+        # Refine with GridSearchCV around best params
+        best_params = random_search.best_params_
+        refined_param_grid = {
+            'n_estimators': [max(100, best_params['n_estimators'] - 50),
+                             best_params['n_estimators'],
+                             best_params['n_estimators'] + 50],
+            'max_depth': [best_params['max_depth']],
+            'min_samples_split': [max(2, best_params['min_samples_split'] - 1),
+                                  best_params['min_samples_split'],
+                                  best_params['min_samples_split'] + 1],
+            'min_samples_leaf': [max(1, best_params['min_samples_leaf'] - 1),
+                                 best_params['min_samples_leaf'],
+                                 best_params['min_samples_leaf'] + 1]
+        }
+
+        # Grid search with cross-validation for fine-tuning
+        grid_search = GridSearchCV(
+            estimator=best_rf,
+            param_grid=refined_param_grid,
+            cv=5,
             n_jobs=-1,
             scoring='f1_weighted'
         )
 
-        # Fit model
-        print("Performing grid search for Random Forest...")
-        grid_search.fit(X_train, y_train.astype(int))  # Convert labels to int
-
-        # Get best model
+        print("Fine-tuning RF with grid search...")
+        grid_search.fit(X_train, y_train.astype(int))
         best_rf = grid_search.best_estimator_
 
         # Log best parameters to W&B
@@ -98,153 +132,119 @@ class ClassicalMLModels:
         return best_rf, y_pred
 
     def train_svm(self, X_train, y_train, X_val, y_val, signal_type):
-        """Train SVM model."""
+        """Train SVM model with optimized parameters."""
         print(f"Training SVM on {signal_type} signal...")
 
-        # Define parameter grid for grid search
-        param_grid = {
-            'C': [0.1, 1, 10],
-            'gamma': ['scale', 'auto'],
-            'kernel': ['rbf', 'linear']
+        # Apply dimensionality reduction if data is high-dimensional
+        from sklearn.decomposition import PCA
+
+        n_features = X_train.shape[1]
+        n_samples = X_train.shape[0]
+
+        # Determine optimal number of components (reducing dimensions helps SVM)
+        n_components = min(n_features, n_samples, 500)  # Cap at 500 features
+
+        print(f"Applying PCA to reduce dimensions from {n_features} to {n_components}...")
+        pca = PCA(n_components=n_components, random_state=42)
+        X_train_pca = pca.fit_transform(X_train)
+        X_val_pca = pca.transform(X_val)
+
+        print(f"PCA explained variance ratio: {sum(pca.explained_variance_ratio_):.4f}")
+
+        # Define parameter grid for randomized search
+        param_dist = {
+            'C': uniform(0.1, 20),  # Broader range of regularization values
+            'gamma': ['scale', 'auto', 0.001, 0.01, 0.1, 1],
+            'kernel': ['rbf', 'linear', 'poly'],
+            'degree': [2, 3],  # For poly kernel
+            'class_weight': ['balanced', None],
+            'probability': [True]  # Needed for ROC curves
         }
 
         # Initialize SVM
-        svm = SVC(random_state=42, probability=True)
+        svm = SVC(random_state=42)
 
         # Get class weights
         class_weights = self.data.get('class_weights', {}).get(signal_type, None)
         if class_weights:
-            # Convert class weights to format expected by sklearn
-            svm.set_params(class_weight=class_weights)
+            # Include specific class weights in the search
+            param_dist['class_weight'] = ['balanced', None, class_weights]
 
-        # Grid search with cross-validation
-        grid_search = GridSearchCV(
+        # Randomized search with cross-validation
+        random_search = RandomizedSearchCV(
             estimator=svm,
-            param_grid=param_grid,
+            param_distributions=param_dist,
+            n_iter=20,  # Number of parameter settings sampled
             cv=3,
             n_jobs=-1,
-            scoring='f1_weighted'
+            scoring='f1_weighted',
+            random_state=42
         )
 
         # Fit model
-        print("Performing grid search for SVM...")
-        grid_search.fit(X_train, y_train.astype(int))  # Convert labels to int
+        print("Performing randomized search for SVM...")
+        random_search.fit(X_train_pca, y_train.astype(int))  # Convert labels to int
 
         # Get best model
-        best_svm = grid_search.best_estimator_
+        best_svm = random_search.best_estimator_
 
         # Log best parameters to W&B
         if self.wandb:
-            self.wandb.log({f"{signal_type}_svm_best_params": grid_search.best_params_})
+            self.wandb.log({f"{signal_type}_svm_best_params": random_search.best_params_})
 
         # Evaluate on validation set
-        y_pred = best_svm.predict(X_val)
+        y_pred = best_svm.predict(X_val_pca)
 
-        # Store model
+        # Store model and PCA transformer
         self.models[f"{signal_type}_svm"] = best_svm
+        self.models[f"{signal_type}_svm_pca"] = pca
 
-        print(f"SVM training complete with best parameters: {grid_search.best_params_}")
+        print(f"SVM training complete with best parameters: {random_search.best_params_}")
 
         return best_svm, y_pred
 
-    def train_xgboost(self, X_train, y_train, X_val, y_val, signal_type):
-        """Train XGBoost model."""
-        print(f"Training XGBoost on {signal_type} signal...")
-
-        # Define parameter grid for grid search
-        param_grid = {
-            'n_estimators': [100, 200],
-            'max_depth': [3, 5, 7],
-            'learning_rate': [0.01, 0.1],
-            'subsample': [0.8, 1.0]
-        }
-
-        # Initialize XGBoost
-        xgb_model = xgb.XGBClassifier(random_state=42, eval_metric='mlogloss')
-
-        # Get class weights
-        class_weights = self.data.get('class_weights', {}).get(signal_type, None)
-        if class_weights:
-            # XGBoost uses sample weights, so convert class weights to sample weights
-            sample_weights = np.ones(len(y_train))
-            for cls, weight in class_weights.items():
-                # Convert cls to int and handle float labels
-                cls_int = int(cls)
-                sample_weights[y_train.astype(int) == cls_int] = weight
-        else:
-            sample_weights = None
-
-        # Grid search with cross-validation
-        grid_search = GridSearchCV(
-            estimator=xgb_model,
-            param_grid=param_grid,
-            cv=3,
-            n_jobs=-1,
-            scoring='f1_weighted'
-        )
-
-        # Fit model
-        print("Performing grid search for XGBoost...")
-        grid_search.fit(
-            X_train,
-            y_train.astype(int),  # Convert labels to int
-            sample_weight=sample_weights
-        )
-
-        # Get best model
-        best_xgb = grid_search.best_estimator_
-
-        # Log best parameters to W&B
-        if self.wandb:
-            self.wandb.log({f"{signal_type}_xgb_best_params": grid_search.best_params_})
-
-        # Evaluate on validation set
-        y_pred = best_xgb.predict(X_val)
-
-        # Store model
-        self.models[f"{signal_type}_xgboost"] = best_xgb
-
-        print(f"XGBoost training complete with best parameters: {grid_search.best_params_}")
-
-        return best_xgb, y_pred
-
     def train_mlp(self, X_train, y_train, X_val, y_val, signal_type):
-        """Train Multilayer Perceptron (MLP) model."""
+        """Train Multilayer Perceptron (MLP) model with optimized parameters."""
         print(f"Training MLP on {signal_type} signal...")
 
-        # Define parameter grid for grid search
-        param_grid = {
-            'hidden_layer_sizes': [(64,), (128,), (64, 32)],
+        # Define parameter grid for randomized search
+        param_dist = {
+            'hidden_layer_sizes': [(64,), (128,), (256,), (64, 32), (128, 64), (256, 128), (128, 64, 32)],
             'activation': ['relu', 'tanh'],
-            'alpha': [0.0001, 0.001, 0.01],
-            'learning_rate_init': [0.001, 0.01],
+            'alpha': uniform(0.0001, 0.01),
+            'learning_rate': ['constant', 'adaptive', 'invscaling'],
+            'learning_rate_init': uniform(0.0005, 0.005),
+            'max_iter': [500, 1000],
             'early_stopping': [True],
-            'n_iter_no_change': [10]
+            'n_iter_no_change': [10, 20],
+            'solver': ['adam', 'sgd']
         }
 
         # Initialize MLP with early stopping
         mlp = MLPClassifier(random_state=42, max_iter=1000,
                             early_stopping=True, validation_fraction=0.1)
 
-        # Grid search with cross-validation
-        grid_search = GridSearchCV(
+        # Randomized search with cross-validation
+        random_search = RandomizedSearchCV(
             estimator=mlp,
-            param_grid=param_grid,
+            param_distributions=param_dist,
+            n_iter=20,  # Number of parameter settings sampled
             cv=3,
             n_jobs=-1,
-            scoring='f1_weighted'
+            scoring='f1_weighted',
+            random_state=42
         )
 
         # Fit model
-        print("Performing grid search for MLP...")
-        grid_search.fit(X_train, y_train.astype(int))  # Convert labels to int
+        print("Performing randomized search for MLP...")
+        random_search.fit(X_train, y_train.astype(int))  # Convert labels to int
 
         # Get best model
-        best_mlp = grid_search.best_estimator_
+        best_mlp = random_search.best_estimator_
 
         # Log best parameters to W&B
         if self.wandb:
-            self.wandb.log({f"{signal_type}_mlp_best_params": grid_search.best_params_})
+            self.wandb.log({f"{signal_type}_mlp_best_params": random_search.best_params_})
 
         # Evaluate on validation set
         y_pred = best_mlp.predict(X_val)
@@ -252,10 +252,9 @@ class ClassicalMLModels:
         # Store model
         self.models[f"{signal_type}_mlp"] = best_mlp
 
-        print(f"MLP training complete with best parameters: {grid_search.best_params_}")
+        print(f"MLP training complete with best parameters: {random_search.best_params_}")
 
         return best_mlp, y_pred
-
 
     def evaluate_model(self, y_true, y_pred, signal_type, model_type):
         """Evaluate model performance and store metrics."""
@@ -332,7 +331,6 @@ class ClassicalMLModels:
             # Calculate and log ROC curve for each class
             if len(classes) > 1:
                 # Get probability predictions
-                # FIX: Remove 'test_' prefix when accessing model
                 model_key = f"{signal_type.replace('test_', '')}_{model_type}"
                 model = self.models[model_key]
 
@@ -341,6 +339,11 @@ class ClassicalMLModels:
                 X_data = self.data[f'X_val_{signal_type_clean}']
                 if signal_type.startswith('test_'):
                     X_data = self.data[f'X_test_{signal_type_clean}']
+
+                # Apply PCA if using SVM
+                if model_type == 'svm':
+                    pca = self.models[f"{signal_type_clean}_svm_pca"]
+                    X_data = pca.transform(X_data)
 
                 if hasattr(model, 'predict_proba'):
                     y_score = model.predict_proba(X_data)
@@ -386,10 +389,6 @@ class ClassicalMLModels:
             _, y_pred_svm = self.train_svm(X_train, y_train, X_val, y_val, signal_type)
             self.evaluate_model(y_val, y_pred_svm, signal_type, 'svm')
 
-            # Train XGBoost
-            _, y_pred_xgb = self.train_xgboost(X_train, y_train, X_val, y_val, signal_type)
-            self.evaluate_model(y_val, y_pred_xgb, signal_type, 'xgboost')
-
             # Train MLP
             _, y_pred_mlp = self.train_mlp(X_train, y_train, X_val, y_val, signal_type)
             self.evaluate_model(y_val, y_pred_mlp, signal_type, 'mlp')
@@ -410,8 +409,15 @@ class ClassicalMLModels:
                 # Get model
                 model = self.models[f"{signal_type}_{model_type}"]
 
-                # Make predictions
-                y_pred = model.predict(X_test)
+                # Apply PCA if using SVM
+                if model_type == 'svm':
+                    pca = self.models[f"{signal_type}_svm_pca"]
+                    X_test_transformed = pca.transform(X_test)
+                    # Make predictions
+                    y_pred = model.predict(X_test_transformed)
+                else:
+                    # Make predictions
+                    y_pred = model.predict(X_test)
 
                 # Evaluate
                 metrics = self.evaluate_model(y_test, y_pred, f"test_{signal_type}", model_type)
@@ -440,10 +446,6 @@ class ClassicalMLModels:
             rf_model = self.models[f"{signal_type}_random_forest"]
             rf_importance = rf_model.feature_importances_
 
-            # Get feature importance from XGBoost
-            xgb_model = self.models[f"{signal_type}_xgboost"]
-            xgb_importance = xgb_model.feature_importances_
-
             # Get MLP coefficients (not direct feature importance but can be used as a proxy)
             mlp_model = self.models[f"{signal_type}_mlp"]
             if hasattr(mlp_model, 'coefs_') and len(mlp_model.coefs_) > 0:
@@ -455,21 +457,18 @@ class ClassicalMLModels:
             # Reshape importance scores to (window_size, n_neurons)
             current_n_neurons = n_neurons[signal_type]
             rf_importance_2d = rf_importance.reshape(window_size, current_n_neurons)
-            xgb_importance_2d = xgb_importance.reshape(window_size, current_n_neurons)
             mlp_importance_2d = mlp_importance.reshape(window_size, current_n_neurons)
 
             # Store results
             importance_results[f"{signal_type}_rf"] = rf_importance_2d.tolist()
-            importance_results[f"{signal_type}_xgb"] = xgb_importance_2d.tolist()
             importance_results[f"{signal_type}_mlp"] = mlp_importance_2d.tolist()
 
             # Visualize temporal importance (mean across neurons)
             temporal_importance_rf = np.mean(rf_importance_2d, axis=1)
-            temporal_importance_xgb = np.mean(xgb_importance_2d, axis=1)
             temporal_importance_mlp = np.mean(mlp_importance_2d, axis=1)
 
             # Create figure
-            fig, ax = plt.subplots(1, 3, figsize=(18, 6))
+            fig, ax = plt.subplots(1, 2, figsize=(15, 6))
 
             # Plot RF temporal importance
             ax[0].bar(range(window_size), temporal_importance_rf)
@@ -477,17 +476,11 @@ class ClassicalMLModels:
             ax[0].set_xlabel('Time Step')
             ax[0].set_ylabel('Mean Feature Importance')
 
-            # Plot XGB temporal importance
-            ax[1].bar(range(window_size), temporal_importance_xgb)
-            ax[1].set_title(f'XGB Temporal Importance - {signal_type}')
-            ax[1].set_xlabel('Time Step')
-            ax[1].set_ylabel('Mean Feature Importance')
-
             # Plot MLP "importance"
-            ax[2].bar(range(window_size), temporal_importance_mlp)
-            ax[2].set_title(f'MLP Weight Magnitude - {signal_type}')
-            ax[2].set_xlabel('Time Step')
-            ax[2].set_ylabel('Mean Weight Magnitude')
+            ax[1].bar(range(window_size), temporal_importance_mlp)
+            ax[1].set_title(f'MLP Weight Magnitude - {signal_type}')
+            ax[1].set_xlabel('Time Step')
+            ax[1].set_ylabel('Mean Weight Magnitude')
 
             # Save figure
             plt.tight_layout()
@@ -501,11 +494,10 @@ class ClassicalMLModels:
 
             # Visualize neuron importance (mean across time)
             neuron_importance_rf = np.mean(rf_importance_2d, axis=0)
-            neuron_importance_xgb = np.mean(xgb_importance_2d, axis=0)
             neuron_importance_mlp = np.mean(mlp_importance_2d, axis=0)
 
             # Create figure
-            fig, ax = plt.subplots(1, 3, figsize=(24, 6))
+            fig, ax = plt.subplots(1, 2, figsize=(16, 6))
 
             # Get number of neurons to show (max 50)
             num_neurons_to_show = min(50, current_n_neurons)
@@ -517,19 +509,12 @@ class ClassicalMLModels:
             ax[0].set_xlabel('Neuron Index')
             ax[0].set_ylabel('Mean Feature Importance')
 
-            # Plot XGB neuron importance (top N neurons)
-            top_neurons_xgb = np.argsort(neuron_importance_xgb)[-num_neurons_to_show:]
-            ax[1].bar(top_neurons_xgb, neuron_importance_xgb[top_neurons_xgb])
-            ax[1].set_title(f'XGB Top {num_neurons_to_show} Neuron Importance - {signal_type}')
-            ax[1].set_xlabel('Neuron Index')
-            ax[1].set_ylabel('Mean Feature Importance')
-
             # Plot MLP neuron importance (top N neurons)
             top_neurons_mlp = np.argsort(neuron_importance_mlp)[-num_neurons_to_show:]
-            ax[2].bar(top_neurons_mlp, neuron_importance_mlp[top_neurons_mlp])
-            ax[2].set_title(f'MLP Top {num_neurons_to_show} Neuron Weight Magnitude - {signal_type}')
-            ax[2].set_xlabel('Neuron Index')
-            ax[2].set_ylabel('Mean Weight Magnitude')
+            ax[1].bar(top_neurons_mlp, neuron_importance_mlp[top_neurons_mlp])
+            ax[1].set_title(f'MLP Top {num_neurons_to_show} Neuron Weight Magnitude - {signal_type}')
+            ax[1].set_xlabel('Neuron Index')
+            ax[1].set_ylabel('Mean Weight Magnitude')
 
             # Save figure
             plt.tight_layout()
@@ -540,6 +525,10 @@ class ClassicalMLModels:
                 self.wandb.log({f"{signal_type}_neuron_importance": wandb.Image(fig)})
 
             plt.close(fig)
+
+            # Store top neuron indices for later visualization
+            importance_results[f"{signal_type}_top_neurons_rf"] = top_neurons_rf.tolist()
+            importance_results[f"{signal_type}_top_neurons_mlp"] = top_neurons_mlp.tolist()
 
         # Store feature importance results
         self.results['feature_importance'] = importance_results

@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 import wandb
 from tqdm import tqdm
 import random
@@ -151,11 +151,11 @@ def align_neural_behavioral_data(neural_data, behavior_df):
     return neural_data
 
 
-# Preprocess and prepare data for ML
-def preprocess_data(data_dict, window_size=10, step_size=2):
+# Preprocess and prepare data for ML (optimized version)
+def preprocess_data(data_dict, window_size=10, step_size=1):
     """
     Process neural data with sliding windows and prepare for ML.
-    Based on the paper, using window_size=10, step_size=2 for initial models.
+    Using smaller step_size=1 for better temporal resolution.
     """
     print("Preprocessing data with sliding windows...")
 
@@ -181,6 +181,33 @@ def preprocess_data(data_dict, window_size=10, step_size=2):
     print(f"ΔF/F neurons: {n_deltaf_neurons}")
     print(f"Deconvolved neurons: {n_deconv_neurons}")
 
+    # Apply signal smoothing to reduce noise
+    from scipy.signal import savgol_filter
+
+    # Smooth signals along the time dimension
+    smoothed_calcium = np.zeros_like(calcium_signal)
+    smoothed_deltaf = np.zeros_like(deltaf_cells_not_excluded)
+    smoothed_deconv = np.zeros_like(deconv_mat_wanted)
+
+    # Apply Savitzky-Golay filter to each neuron's time series
+    for i in range(n_calcium_neurons):
+        smoothed_calcium[:, i] = savgol_filter(calcium_signal[:, i],
+                                               window_length=5,
+                                               polyorder=2,
+                                               mode='nearest')
+
+    for i in range(n_deltaf_neurons):
+        smoothed_deltaf[:, i] = savgol_filter(deltaf_cells_not_excluded[:, i],
+                                              window_length=5,
+                                              polyorder=2,
+                                              mode='nearest')
+
+    for i in range(n_deconv_neurons):
+        smoothed_deconv[:, i] = savgol_filter(deconv_mat_wanted[:, i],
+                                              window_length=5,
+                                              polyorder=2,
+                                              mode='nearest')
+
     # Create sliding windows
     def create_windows(data, labels):
         n_samples = data.shape[0]
@@ -190,35 +217,36 @@ def preprocess_data(data_dict, window_size=10, step_size=2):
         # Use tqdm for progress tracking
         for i in tqdm(range(0, n_samples - window_size + 1, step_size), desc="Creating windows"):
             window = data[i:i + window_size, :]
-            # Use the label from the last frame in the window as in the paper
-            label = labels[i + window_size - 1]
+            # Majority label in the window (more robust than just taking last frame)
+            window_label_counts = np.bincount(labels[i:i + window_size].astype(int))
+            label = np.argmax(window_label_counts)
 
             windows.append(window.flatten())
             window_labels.append(label)
 
         return np.array(windows), np.array(window_labels)
 
-    # Create windowed data for each signal type
+    # Create windowed data for each signal type using smoothed signals
     print("Processing calcium signal...")
-    X_calcium, y_calcium = create_windows(calcium_signal, labels)
+    X_calcium, y_calcium = create_windows(smoothed_calcium, labels)
 
     print("Processing ΔF/F signal...")
-    X_deltaf, y_deltaf = create_windows(deltaf_cells_not_excluded, labels)
+    X_deltaf, y_deltaf = create_windows(smoothed_deltaf, labels)
 
     print("Processing deconvolved signal...")
-    X_deconv, y_deconv = create_windows(deconv_mat_wanted, labels)
+    X_deconv, y_deconv = create_windows(smoothed_deconv, labels)
 
     print(f"Created {X_calcium.shape[0]} windows for each signal type")
 
-    # Normalize data
+    # Normalize data with RobustScaler (better for neuronal data which may have outliers)
     print("Normalizing data...")
-    scaler_calcium = StandardScaler()
+    scaler_calcium = RobustScaler()
     X_calcium_norm = scaler_calcium.fit_transform(X_calcium)
 
-    scaler_deltaf = StandardScaler()
+    scaler_deltaf = RobustScaler()
     X_deltaf_norm = scaler_deltaf.fit_transform(X_deltaf)
 
-    scaler_deconv = StandardScaler()
+    scaler_deconv = RobustScaler()
     X_deconv_norm = scaler_deconv.fit_transform(X_deconv)
 
     return {
@@ -236,12 +264,15 @@ def preprocess_data(data_dict, window_size=10, step_size=2):
             'calcium': scaler_calcium,
             'deltaf': scaler_deltaf,
             'deconv': scaler_deconv
-        }
+        },
+        'raw_calcium': calcium_signal,
+        'raw_deltaf': deltaf_cells_not_excluded,
+        'raw_deconv': deconv_mat_wanted
     }
 
 
 # Split data into train/validation/test sets
-def split_data(processed_data, test_size=0.2, val_size=0.2, random_state=42):
+def split_data(processed_data, test_size=0.2, val_size=0.15, random_state=42):
     """Split data into train, validation, and test sets with stratification."""
     result = {}
 
@@ -282,12 +313,17 @@ def split_data(processed_data, test_size=0.2, val_size=0.2, random_state=42):
             if len(class_counts) > 2:
                 print(f"  Left foot (2): {class_counts[2]} samples")
 
+    # Store raw signals for visualization
+    for signal_type in ['calcium', 'deltaf', 'deconv']:
+        if f'raw_{signal_type}' in processed_data:
+            result[f'raw_{signal_type}'] = processed_data[f'raw_{signal_type}']
+
     return result
 
 
 # Calculate class weights to handle imbalanced data
 def calculate_class_weights(y_train):
-    """Calculate class weights inversely proportional to class frequencies."""
+    """Calculate class weights inversely proportional to class frequencies with smoothing."""
     classes = np.unique(y_train)
     class_counts = np.bincount(y_train.astype(int))
     total_samples = len(y_train)
@@ -301,12 +337,14 @@ def calculate_class_weights(y_train):
         if cls_int < len(class_counts):
             full_class_counts[cls_int] = class_counts[cls_int]
 
-    # Calculate weights
+    # Calculate weights with smoothing to prevent extreme values
     class_weights = {}
     for cls in classes:
         cls_int = int(cls)  # Convert class to integer explicitly
         if full_class_counts[cls_int] > 0:
-            class_weights[cls_int] = total_samples / (len(classes) * full_class_counts[cls_int])
+            # Apply smoothing to prevent extreme weights
+            weight = np.log1p(total_samples / (len(classes) * full_class_counts[cls_int]))
+            class_weights[cls_int] = min(10.0, max(1.0, weight))  # Clip weights between 1 and 10
         else:
             class_weights[cls_int] = 1.0
 
@@ -428,8 +466,13 @@ def save_processed_data(data_dict, file_path):
 
 
 # Main processing function
-def process_main(matlab_file_path, behavior_file_path=None, window_size=10, step_size=2, experiment_name=None):
-    """Main function to process data and prepare for ML."""
+def process_main(matlab_file_path, behavior_file_path=None, window_size=15, step_size=1, experiment_name=None):
+    """Main function to process data and prepare for ML.
+
+    Using optimized parameters:
+    - window_size=15 to capture more temporal context
+    - step_size=1 for better overlap between windows
+    """
     # Set seed for reproducibility
     set_seeds(42)
 
@@ -520,9 +563,9 @@ if __name__ == "__main__":
                         help='Path to MATLAB file containing calcium imaging data')
     parser.add_argument('--behavior_file', type=str, default=None,
                         help='Path to behavior data Excel file')
-    parser.add_argument('--window_size', type=int, default=10,
+    parser.add_argument('--window_size', type=int, default=15,
                         help='Window size for sliding window')
-    parser.add_argument('--step_size', type=int, default=5,
+    parser.add_argument('--step_size', type=int, default=1,
                         help='Step size for sliding window')
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Name for the W&B experiment')

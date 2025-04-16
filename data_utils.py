@@ -54,13 +54,15 @@ def create_dataloaders(data_dict, signal_type, batch_size=32, num_workers=4):
     val_dataset = CalciumImagingDataset(X_val, y_val)
     test_dataset = CalciumImagingDataset(X_test, y_test)
 
-    # Create dataloaders
+    # Create dataloaders with optimized settings
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=False,  # Include incomplete batches to use all available data
+        prefetch_factor=2  # Prefetch batches for improved performance
     )
 
     val_loader = DataLoader(
