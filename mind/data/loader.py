@@ -110,21 +110,6 @@ def match_behavior_to_frames(behavior_data: pd.DataFrame, num_frames: int,
                              binary_classification: bool = True) -> np.ndarray:
     """
     Create frame-by-frame behavior labels from behavioral events.
-
-    Parameters
-    ----------
-    behavior_data : pd.DataFrame
-        DataFrame containing behavioral annotations
-    num_frames : int
-        Number of frames in the calcium imaging data
-    binary_classification : bool, optional
-        If True, create binary labels (0 for no footstep, 1 for contralateral/right footstep)
-        If False, create multi-class labels (0 for no footstep, 1 for contralateral, 2 for ipsilateral)
-
-    Returns
-    -------
-    np.ndarray
-        Array of behavior labels for each frame
     """
     logger.info(f"Creating frame-by-frame behavior labels for {num_frames} frames")
     logger.info(f"Binary classification mode: {binary_classification}")

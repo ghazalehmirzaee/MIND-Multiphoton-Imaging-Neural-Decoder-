@@ -13,8 +13,8 @@ DEFAULT_CONFIG = {
         "batch_size": 32,
         "num_workers": 4,
         "binary_classification": True,
-        "mat_file": "data/raw/SFL13_5_8112021_002_new_modified.mat",
-        "xlsx_file": "data/raw/SFL13_5_8112021_002_new.xlsx"
+        "mat_file": "data/raw/SFL13_5_8112021_003_new_modified.mat",
+        "xlsx_file": "data/raw/SFL13_5_8112021_003_new.xlsx"
     },
 
     # Model parameters

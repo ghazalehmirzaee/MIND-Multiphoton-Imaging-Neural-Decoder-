@@ -21,73 +21,114 @@ def plot_temporal_importance_patterns(
         output_dir: Optional[Path] = None
 ) -> plt.Figure:
     """
-    Create temporal importance bar plots with contralateral footstep markers.
-
-    This enhanced visualization marks time points where contralateral footsteps occurred,
-    helping researchers visualize the relationship between neural importance and movement
-    events. This is particularly valuable for understanding the temporal dynamics of
-    motor cortex activity during skilled locomotion.
+    Create temporal importance bar plots that focuses on the most informative time steps.
     """
     set_publication_style()
 
     signals = ['calcium_signal', 'deltaf_signal', 'deconv_signal']
 
+    # Define the frame range we want to visualize (4-14, which is indices 4:15)
+    start_frame = 4
+    end_frame = 15  # 10 frames total
+    frame_indices = slice(start_frame, end_frame)
+    displayed_frames = list(range(start_frame, end_frame))
+
     fig, axes = plt.subplots(1, 3, figsize=FIGURE_SIZES['grid_1x3'])
 
-    for j, signal in enumerate(signals):
-        ax = axes[j]
+    # First pass: collect all temporal importance values to determine global scaling
+    all_importance_values = []
+    signal_importance_data = {}
 
+    for signal in signals:
         try:
             importance_summary = results['random_forest'][signal]['importance_summary']
             temporal_importance = np.array(importance_summary['temporal_importance'])
 
+            # Extract only the frames we want to display (4-14)
+            selected_importance = temporal_importance[frame_indices]
+            signal_importance_data[signal] = selected_importance
+
+            # Add to global collection for scaling calculation
+            all_importance_values.extend(selected_importance)
+
+        except (KeyError, TypeError, ValueError):
+            # Handle missing data by creating zeros
+            signal_importance_data[signal] = np.zeros(len(displayed_frames))
+            logger.warning(f"No temporal data available for {signal}")
+
+    # Calculate global y-axis limits for consistent scaling
+    if all_importance_values:
+        global_min = min(all_importance_values)
+        global_max = max(all_importance_values)
+
+        # Add some padding to the limits for better visualization
+        padding = (global_max - global_min) * 0.1
+        y_min = max(0, global_min - padding)  # Don't go below 0
+        y_max = global_max + padding
+
+        # If the range is very small, set a minimum range for visibility
+        if (y_max - y_min) < 0.01:
+            y_max = global_max + 0.01
+
+    else:
+        # Fallback limits if no data is available
+        y_min, y_max = 0, 0.1
+
+    # Second pass: create the actual plots with consistent scaling
+    for j, signal in enumerate(signals):
+        ax = axes[j]
+
+        temporal_importance = signal_importance_data[signal]
+
+        if len(temporal_importance) > 0 and np.any(temporal_importance):
             # Get signal-specific color scheme for consistent visualization
             signal_color = SIGNAL_COLORS[signal]
             gradient = SIGNAL_GRADIENTS[signal]
 
             # Create bars with gradient effect based on importance values
-            bars = ax.bar(range(len(temporal_importance)), temporal_importance)
+            # Use displayed_frames for x-axis positioning to show actual frame numbers
+            bars = ax.bar(displayed_frames, temporal_importance)
 
             # Apply gradient coloring to bars for visual appeal and information encoding
-            for i, bar in enumerate(bars):
-                # Calculate gradient intensity based on relative importance
-                intensity = temporal_importance[i] / temporal_importance.max()
-                color_idx = min(int(intensity * (len(gradient) - 1)), len(gradient) - 1)
-                bar.set_color(gradient[color_idx])
-                bar.set_edgecolor(signal_color)
-                bar.set_linewidth(0.5)
+            if temporal_importance.max() > 0:  # Avoid division by zero
+                for i, bar in enumerate(bars):
+                    # Calculate gradient intensity based on relative importance
+                    intensity = temporal_importance[i] / temporal_importance.max()
+                    color_idx = min(int(intensity * (len(gradient) - 1)), len(gradient) - 1)
+                    bar.set_color(gradient[color_idx])
+                    bar.set_edgecolor(signal_color)
+                    bar.set_linewidth(0.5)
+            else:
+                # If all values are zero, use the base color
+                for bar in bars:
+                    bar.set_color(gradient[0])
+                    bar.set_edgecolor(signal_color)
+                    bar.set_linewidth(0.5)
 
             # Add contralateral footstep markers if behavioral data is provided
             if frame_labels is not None:
-                max_importance = temporal_importance.max()
-
                 # Track marked positions to avoid overcrowding labels
                 marked_positions = []
 
-                for i in range(len(temporal_importance)):
-                    # Determine the corresponding frame range for this time step
-                    # The sliding window approach means each time step represents a window
-                    window_start = max(0, i)
-                    window_end = min(i + window_size, len(frame_labels))
-
-                    # Check if there's a contralateral footstep at the end of this window
-                    if window_end - 1 < len(frame_labels) and frame_labels[window_end - 1] == 1:
+                for i, frame_num in enumerate(displayed_frames):
+                    # Check if there's a contralateral footstep at this frame
+                    if frame_num < len(frame_labels) and frame_labels[frame_num] == 1:
                         # Add distinctive red triangle marker above the bar
-                        marker_y = temporal_importance[i] + max_importance * 0.08
-                        ax.plot(i, marker_y, 'v', color='red', markersize=10,
+                        marker_y = temporal_importance[i] + y_max * 0.08
+                        ax.plot(frame_num, marker_y, 'v', color='red', markersize=10,
                                 markeredgecolor='darkred', markeredgewidth=1.5,
                                 zorder=10)
 
                         # Add "CONTRA" label above the marker for clarity
-                        label_y = marker_y + max_importance * 0.05
-                        ax.text(i, label_y, 'CONTRA',
+                        label_y = marker_y + y_max * 0.05
+                        ax.text(frame_num, label_y, 'CONTRA',
                                 ha='center', va='bottom', fontsize=8,
                                 color='darkred', fontweight='bold',
                                 bbox=dict(boxstyle="round,pad=0.2",
                                           facecolor='white', edgecolor='darkred',
                                           alpha=0.8))
 
-                        marked_positions.append(i)
+                        marked_positions.append(frame_num)
 
                 # Add informative legend if footstep markers are present
                 if marked_positions:
@@ -102,32 +143,38 @@ def plot_temporal_importance_patterns(
                               framealpha=0.95, fontsize=9,
                               fancybox=True, shadow=True)
 
-            # Set axis labels and styling
-            ax.set_xlabel('Time Step', fontsize=12)
-            ax.set_ylabel('Mean Feature Importance', fontsize=12)
-            ax.set_title(f'{SIGNAL_DISPLAY_NAMES[signal]}',
-                         fontsize=14, fontweight='bold', color=signal_color)
-            ax.grid(True, alpha=0.3, axis='y')
-
-            # Apply consistent styling across all subplots
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_color(signal_color)
-            ax.spines['left'].set_linewidth(2)
-
-            # Set y-axis limits with adequate space for markers and labels
-            y_max_adjustment = 1.25 if frame_labels is not None else 1.1
-            ax.set_ylim(0, temporal_importance.max() * y_max_adjustment)
-
-        except (KeyError, TypeError, ValueError):
+        else:
             # Handle cases where temporal data is not available
             ax.text(0.5, 0.5, 'No temporal data',
                     ha='center', va='center', transform=ax.transAxes)
-            ax.set_xticks([])
-            ax.set_yticks([])
 
-    # Create informative title that reflects the enhanced functionality
-    title = 'Temporal Importance Patterns'
+        # Set axis labels and styling with conditional y-axis labeling
+        ax.set_xlabel('Time Step', fontsize=12)
+
+        # Only add y-axis label to the first subplot for cleaner presentation
+        if j == 0:
+            ax.set_ylabel('Mean Feature Importance', fontsize=12)
+
+        ax.set_title(f'{SIGNAL_DISPLAY_NAMES[signal]}',
+                     fontsize=14, fontweight='bold', color=SIGNAL_COLORS[signal])
+        ax.grid(True, alpha=0.3, axis='y')
+
+        # Apply consistent styling across all subplots
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color(SIGNAL_COLORS[signal])
+        ax.spines['left'].set_linewidth(2)
+
+        # Set consistent y-axis limits across all subplots
+        ax.set_ylim(y_min, y_max)
+
+        # Set x-axis limits and ticks to show frames 4-14
+        ax.set_xlim(start_frame - 0.5, end_frame - 0.5)
+        ax.set_xticks(displayed_frames)
+        ax.set_xticklabels([str(f) for f in displayed_frames])
+
+    # Create informative title that reflects the focused frame range
+    title = f'Temporal Importance Patterns'
     if frame_labels is not None:
         title += ' with Movement Events'
     fig.suptitle(title, fontsize=16, fontweight='bold')
@@ -145,12 +192,10 @@ def plot_top_neuron_importance(
         output_dir: Optional[Path] = None
 ) -> plt.Figure:
     """
-    Create enhanced horizontal bar plots with scatter overlay showing individual importance values.
+    Create horizontal bar plots with scatter overlay showing individual importance values.
 
     This visualization combines mean importance (as horizontal bars) with the distribution
-    of importance values across time steps (as scatter points) for each top neuron. The
-    y-axis labels have been simplified to show ranking rather than specific neuron IDs,
-    and only the first subplot shows the "Neuron ID" label for cleaner presentation.
+    of importance values across time steps (as scatter points) for each top neuron.
     """
     set_publication_style()
 

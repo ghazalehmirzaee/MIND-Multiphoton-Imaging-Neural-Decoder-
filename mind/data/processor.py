@@ -27,19 +27,6 @@ class SlidingWindowDataset(Dataset):
                  remove_zero_labels: bool = False):
         """
         Initialize a sliding window dataset.
-
-        Parameters
-        ----------
-        signal : np.ndarray
-            Neural activity data, shape (n_frames, n_neurons)
-        labels : np.ndarray
-            Behavior labels, shape (n_frames,)
-        window_size : int, optional
-            Size of the sliding window (number of frames), by default 15
-        step_size : int, optional
-            Step size for the sliding window, by default 1
-        remove_zero_labels : bool, optional
-            If True, remove windows where all labels are 0, by default False
         """
         self.signal = signal
         self.labels = labels
@@ -93,28 +80,6 @@ def create_datasets(calcium_signals: Dict[str, np.ndarray],
                     random_state: int = 42) -> Dict[str, Dict[str, SlidingWindowDataset]]:
     """
     Create train, validation, and test datasets for each signal type.
-
-    Parameters
-    ----------
-    calcium_signals : Dict[str, np.ndarray]
-        Dictionary of calcium signals (calcium_signal, deltaf_signal, deconv_signal)
-    frame_labels : np.ndarray
-        Array of behavior labels for each frame
-    window_size : int, optional
-        Size of the sliding window (number of frames), by default 15
-    step_size : int, optional
-        Step size for the sliding window, by default 1
-    test_size : float, optional
-        Fraction of data to use for testing, by default 0.15
-    val_size : float, optional
-        Fraction of data to use for validation, by default 0.15
-    random_state : int, optional
-        Random seed for reproducibility, by default 42
-
-    Returns
-    -------
-    Dict[str, Dict[str, SlidingWindowDataset]]
-        Dictionary of datasets for each signal type and split (train, val, test)
     """
     logger.info("Creating datasets from calcium signals")
 
@@ -172,20 +137,6 @@ def create_data_loaders(datasets: Dict[str, Dict[str, torch.utils.data.Dataset]]
                         num_workers: int = 4) -> Dict[str, Dict[str, torch.utils.data.DataLoader]]:
     """
     Create DataLoader objects for each dataset.
-
-    Parameters
-    ----------
-    datasets : Dict[str, Dict[str, torch.utils.data.Dataset]]
-        Dictionary of datasets for each signal type and split
-    batch_size : int, optional
-        Batch size for DataLoaders, by default 32
-    num_workers : int, optional
-        Number of worker threads for DataLoaders, by default 4
-
-    Returns
-    -------
-    Dict[str, Dict[str, torch.utils.data.DataLoader]]
-        Dictionary of DataLoaders for each signal type and split
     """
     logger.info(f"Creating DataLoaders with batch_size={batch_size}, num_workers={num_workers}")
 
