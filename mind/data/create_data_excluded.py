@@ -48,15 +48,15 @@ def exclude_cells_from_calcium_signal(file_path):
 
     # Apply the mask to exclude the specified cells
     # This keeps all time points (all rows) but only the non-excluded columns (cells)
-    calciumsignal_excluded = calciumsignal[:, keep_cells_mask]
+    calciumsignal_wanted = calciumsignal[:, keep_cells_mask]
 
-    print(f"Resulting calcium signal shape: {calciumsignal_excluded.shape}")
+    print(f"Resulting calcium signal shape: {calciumsignal_wanted.shape}")
 
     # Verify that our result matches the expected dimensions
-    assert calciumsignal_excluded.shape == deconv_mat.shape, f"Shape mismatch: got {calciumsignal_excluded.shape}, expected {deconv_mat.shape}"
+    assert calciumsignal_wanted.shape == deconv_mat.shape, f"Shape mismatch: got {calciumsignal_wanted.shape}, expected {deconv_mat.shape}"
 
     # Add the new matrix to our data dictionary
-    mat_data['calciumsignal_excluded'] = calciumsignal_excluded
+    mat_data['calciumsignal_wanted'] = calciumsignal_wanted
 
     # Save the updated data back to the .mat file
     # We'll create a backup first, then save the updated version
@@ -69,10 +69,10 @@ def exclude_cells_from_calcium_signal(file_path):
     sio.savemat(file_path, mat_data, format='5')
 
     print("Success! The calciumsignal_excluded matrix has been added to your .mat file.")
-    print(f"Final matrix shape: {calciumsignal_excluded.shape}")
+    print(f"Final matrix shape: {calciumsignal_wanted.shape}")
     print(f"This matches the shape of DeconvMat_wanted and deltaf_cells_not_excluded: {deconv_mat.shape}")
 
-    return calciumsignal_excluded
+    return calciumsignal_wanted
 
 
 def verify_cell_alignment(file_path):
@@ -83,17 +83,17 @@ def verify_cell_alignment(file_path):
 
     mat_data = sio.loadmat(file_path)
 
-    calc_excluded = mat_data['calciumsignal_excluded']
+    calc_wanted = mat_data['calciumsignal_wanted']
     deconv_mat = mat_data['DeconvMat_wanted']
     deltaf_mat = mat_data['deltaf_cells_not_excluded']
 
     print("\nVerification Summary:")
-    print(f"calciumsignal_excluded shape: {calc_excluded.shape}")
+    print(f"calciumsignal_wanted shape: {calc_wanted.shape}")
     print(f"DeconvMat_wanted shape: {deconv_mat.shape}")
     print(f"deltaf_cells_not_excluded shape: {deltaf_mat.shape}")
 
     # Check if shapes match exactly
-    shapes_match = (calc_excluded.shape == deconv_mat.shape == deltaf_mat.shape)
+    shapes_match = (calc_wanted.shape == deconv_mat.shape == deltaf_mat.shape)
     print(f"All matrix shapes match: {shapes_match}")
 
     if shapes_match:
@@ -104,7 +104,7 @@ def verify_cell_alignment(file_path):
 
 if __name__ == "__main__":
     # Set the file path
-    file_path = "/home/ghazal/Documents/NS_Projects/NS_P2_050325/MIND-Multiphoton-Imaging-Neural-Decoder/data/raw/SFL13_3_80321_010_new.mat"
+    file_path = "/home/ghazal/Documents/NS_Projects/NS_P2_050325/MIND-Multiphoton-Imaging-Neural-Decoder/data/raw/SFL13_5_8112021_003_new.mat"
 
     # Check if file exists
     if not os.path.exists(file_path):
