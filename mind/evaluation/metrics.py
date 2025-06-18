@@ -74,24 +74,6 @@ def calculate_metrics(y_true, y_pred, y_prob=None):
 def evaluate_model(model, X_test, y_test):
     """
     Evaluate model and return comprehensive results including curve data.
-
-    This function is like a comprehensive performance review that not only
-    tells us how well the model did, but also provides detailed data for
-    creating visualizations and understanding the model's behavior.
-
-    Parameters
-    ----------
-    model : trained model
-        The model to evaluate
-    X_test : array-like
-        Test features
-    y_test : array-like
-        Test labels
-
-    Returns
-    -------
-    dict
-        Comprehensive results including metrics, confusion matrix, and curve data
     """
     logger.info("Starting model evaluation")
 
